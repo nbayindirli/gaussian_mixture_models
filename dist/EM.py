@@ -18,7 +18,7 @@ VAR_INIT = 1
 def log_exp_sum(x):
     x_max = max(x)
     x_sum = 0
-    for i in range(x):
+    for i in range(len(x)):
         x_sum += math.exp(x[i] - x_max)
 
     return x_max + math.log(x_sum)
@@ -48,7 +48,7 @@ class Data:
     def __init__(self, filename):
         self.data = []
         f = open(filename)
-        (self.nRows,self.nCols) = [int(x) for x in f.readline().split(" ")]
+        (self.nRows, self.nCols) = [int(x) for x in f.readline().split(" ")]
         for line in f:
             self.data.append([float(x) for x in line.split(" ")])
 
@@ -86,7 +86,7 @@ class EM:
         ranges = data.range()
         for i in range(n_clusters):
             p = []
-            init_row = random.randint(0,data.nRows-1)
+            init_row = random.randint(0, data.nRows-1)
             for j in range(data.nCols):
                 # Randomly initialize variance in range of data
                 p.append((random.uniform(ranges[j][0], ranges[j][1]), VAR_INIT*(ranges[j][1] - ranges[j][0])))
@@ -99,10 +99,12 @@ class EM:
     def log_likelihood(self, data):
         # TODO: compute log-likelihood of the data
         log_likelihood = 0.0
+        nr = data.nRows
+        kc = self.nClusters
 
-        for n in range(data.nRows): # data or self here ???
-            log_cluster = np.zeros(self.nClusters)
-            for k in range(self.nClusters):
+        for n in range(nr):
+            log_cluster = np.zeros(kc)
+            for k in range(kc):
                 log_cluster[k] = math.log(norm_pdf(data[n, :], self.parameters[0], self.parameters[1]))
                 log_cluster[k] += math.log(self.priors[k])
 
@@ -124,7 +126,7 @@ class EM:
         for n in range(self.data.nRows):
             for k in range(self.nClusters):
                 log_pri[n, k] = math.log(norm_pdf(self.data[n, :], self.parameters[0], self.parameters[1]))
-                log_pri[n, k] += math.log(self.priors[k])
+                log_pri[n, k] += math.log(self.priors[k])  # addition b/c log
 
         log_sum = log_exp_sum(log_pri)
 
