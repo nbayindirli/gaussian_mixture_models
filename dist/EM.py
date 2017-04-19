@@ -24,9 +24,10 @@ def log_exp_sum(x):
     return x_max + math.log(x_sum)
 
 
+# helper function for gaussian processes
 def norm_pdf(x, mean, var):
-    denom = (2 * math.pi * var)**0.5
-    num = math.exp(-(float(x)-float(mean))**2/(2*var))
+    denom = math.sqrt(2*math.pi*var)
+    num = math.exp(-(((x - mean)**2) / (2*var)))
 
     return num / denom
 
@@ -90,7 +91,7 @@ class EM:
             for j in range(data.nCols):
                 # Randomly initialize variance in range of data
                 p.append((random.uniform(ranges[j][0], ranges[j][1]), VAR_INIT*(ranges[j][1] - ranges[j][0])))
-            self.parameters.append(p) # mean = self.parameters[0], variance = self.parameters[1]
+            self.parameters.append(p)
 
         # Initialize priors uniformly
         for c in range(n_clusters):
@@ -99,112 +100,119 @@ class EM:
     def log_likelihood(self, data):
         # TODO: compute log-likelihood of the data
         log_likelihood = 0.0
-        nr = data.nRows
-        kc = self.nClusters
+        num_observations = data.nRows
+        num_clusters = self.nClusters
+        num_dimensions = data.nCols
 
-        for n in range(nr):
-            log_cluster = np.zeros(kc)
-            for k in range(kc):
-                log_cluster[k] = math.log(norm_pdf(data[n, :], self.parameters[0], self.parameters[1]))
-                log_cluster[k] += math.log(self.priors[k])
+        # compute value of log likelihood
+        for n in range(num_observations):
+            log_cluster = np.zeros(num_clusters)
+            for k in range(num_clusters):
+                for d in range(num_dimensions):
+                    log_cluster[k] = math.log(norm_pdf(x=data[n][d], mean=self.parameters[k][d][0], var=self.parameters[k][d][1]))
+                    log_cluster[k] += math.log(self.priors[k])
 
             # add probabilities
-            log_cluster_sum = log_exp_sum(log_cluster)
-            # add logs
-            log_likelihood += log_cluster_sum
+            log_sum_cluster = log_exp_sum(log_cluster)
+            # add logarithms
+            log_likelihood += log_sum_cluster
 
         return log_likelihood
 
     # Compute marginal distributions of hidden variables
     def e_step(self):
         # TODO: E-step
+        num_observations = self.data.nRows
+        num_clusters = self.nClusters
+        num_dimensions = self.data.nCols
 
-        log_pri = np.zeros(self.data.nRows, self.nClusters)
-        log_post = np.zeros(self.data.nRows, self.nClusters)
+        log_prior = np.zeros((num_observations, num_clusters))
+        log_post = np.zeros((num_observations, num_clusters))
 
-        # comp all log(p(x|j)*p(j))
-        for n in range(self.data.nRows):
-            for k in range(self.nClusters):
-                log_pri[n, k] = math.log(norm_pdf(self.data[n, :], self.parameters[0], self.parameters[1]))
-                log_pri[n, k] += math.log(self.priors[k])  # addition b/c log
+        # compute all log(p(x|j)*p(j))
+        for n in range(num_observations):
+            for k in range(num_clusters):
+                for d in range(num_dimensions):
+                    log_prior[n, k] = math.log(norm_pdf(x=self.data[n][d], mean=self.parameters[k][d][0], var=self.parameters[k][d][1]))
+                    log_prior[n, k] += math.log(self.priors[k])  # additive log property
 
-        log_sum = log_exp_sum(log_pri)
+        log_sum = np.zeros(num_observations)
+        # sum over columns for each dimension
+        for n in range(num_observations):
+                log_sum[n] = log_exp_sum(log_prior[n, :])
 
-        # now log posteriors
-        for n in range(self.data.nRows):
-            for k in range(self.nClusters):
-                log_post[n, k] = log_pri[n, k] - log_sum[n]
+        # compute log posterior probabilities for each pair [n, k]
+        for n in range(num_observations):
+            for k in range(num_clusters):
+                log_post[n, k] = log_prior[n, k] - log_sum[n]
 
         return log_post
 
     # Update the parameter estimates
     def m_step(self, log_post):
         # TODO: M-step
-        nm = log_exp_sum(log_post)
+        num_observations = self.data.nRows
+        num_clusters = self.nClusters
+        num_dimensions = self.data.nCols
 
-        # update mean
-        for k in range(self.nClusters):
-            for d in range(self.data.nCols):
+        log_Nk = np.zeros(num_clusters)
+        for k in range(num_clusters):
+            log_Nk[k] = log_exp_sum(log_post[:, k])
+
+        # re-estimate mean
+        for k in range(num_clusters):
+            for d in range(num_dimensions):
                 sum = 0
-                for n in range(self.data.nRows):
-                    sum += math.exp(log_post[n, k] - nm[k]) * self.data[n, d]
-                self.parameters[0] = sum
+                for n in range(num_observations):
+                    sum += math.exp(log_post[n, k] - log_Nk[k]) * self.data[n][d]
+                # self.parameters[k][d][0] = sum
 
-        print 'Mean: ', self.parameters[0]
-
-        # update variance
-        for k in range(self.nClusters):
+        # re-estimate variance
+        for k in range(num_clusters):
             sum = 0
-            for n in range(self.data.nRows):                # no need for transpose here ???
-                sum += math.exp(log_post[n, k] - nm[k] * (self.data[n, :] - self.parameters[0]))
+            for n in range(num_observations):
+                sum += math.exp(log_post[n, k] - log_Nk[k]) * (self.data[n] - self.parameters[k][:][0]) * (self.data[n] - self.parameters[k][:][0])
             self.parameters[1] = sum
 
-        print 'Variance: ', self.parameters[1]
-
-        # update priors
+        # re-estimate priors
         for k in range(self.nClusters):
-            self.priors[k] = math.exp(nm[k]) / self.data.nRows
-
-        print 'Prior: ', self.priors
+            self.priors[k] = math.exp(log_Nk[k]) / self.data.nRows
 
         return
 
     # Computes the probability that row was generated by cluster
-    def log_prob(self, row, cluster, data):                         # how to utilize ???
+    def log_prob(self, row, cluster, data):
         # TODO: compute probability row i was generated by cluster k
-        prob = 0
 
-        prob = log()
-
-        return prob
+        pass
 
     def run(self, maxsteps=100, testData=None):
         # TODO: Implement EM algorithm
         train_likelihood = 0.0
         test_likelihood = 0.0
 
+        # compute initial value of log likelihood
         old_log_likelihood = self.log_likelihood(self.data)
         num_iters = 1
 
-        print 'Old log likelihood: ', old_log_likelihood
+        print 'Initial log likelihood: ', old_log_likelihood
 
-        for i in range(maxsteps):
+        while num_iters < maxsteps:
             # E-step
             posterior_log_prob = self.e_step()
-            print 'Posterior log probability: ', posterior_log_prob
 
             # M-step
             self.m_step(posterior_log_prob)
 
-            new_log_likelihood = self.log_likelihood(self.data) # (self.data) here ???
+            new_log_likelihood = self.log_likelihood(self.data)
             print 'New log likelihood', new_log_likelihood
 
             log_likelihood_diff = new_log_likelihood - old_log_likelihood
             print 'Log likelihood difference: ', log_likelihood_diff
             print 'Iteration ', num_iters
 
-            if abs(log_likelihood_diff) < 0.001 or num_iters > maxsteps:
-                print 'CONVERGED'
+            if abs(log_likelihood_diff) < 0.001:
+                print 'CONVERGED!'
                 print 'Final log likelihood difference: ', abs(log_likelihood_diff)
                 print 'Total iterations: ', num_iters
 
